@@ -8,6 +8,8 @@ Saves data from Twitter to a SQLite database using [dogsheep/twitter-to-sqlite](
 
 ## Routine execution
 
+* Run 'make search' or 'make user-timeline' to grab the tweets and put them into a SQLite database
+
 ## Dev Container setup
 
 * Uses default Python 3 configuration from Microsoft
