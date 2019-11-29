@@ -1,3 +1,4 @@
+# See [A collection of useful .gitattributes templates](https://github.com/alexkaratarakis/gitattributes)
 # Since we'll almost always run in Linux containers
 * text=auto eol=lf
 
