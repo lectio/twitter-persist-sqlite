@@ -31,5 +31,8 @@
 	"extensions": [
 		"ms-python.python",
 		"ms-azuretools.vscode-docker"
+	],
+	"runArgs": [
+		"--hostname", "devcontainer"
 	]
 }
