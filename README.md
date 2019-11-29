@@ -4,6 +4,8 @@ Saves data from Twitter to a SQLite database using [dogsheep/twitter-to-sqlite](
 
 ## First time setup
 
+Twitter credentials are required, which may be obtained at https://developer.twitter.com/en/apps. 
+
 * Run 'make auth' or supply a twitter-credentials.json file
 
 ## Routine execution

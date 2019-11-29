@@ -19,7 +19,7 @@ ARG USER_GID=$USER_UID
 # Uncomment the following COPY line and the corresponding lines in the `RUN` command if you wish to
 # include your requirements in the image itself. It is suggested that you only do this if your
 # requirements rarely (if ever) change.
-# COPY requirements.txt /tmp/pip-tmp/
+COPY requirements.txt /tmp/pip-tmp/
 
 # Configure apt and install packages
 COPY .devcontainer/.zshrc /etc/zshrc_default
@@ -32,6 +32,9 @@ RUN apt-get update \
     # Verify git, process tools, lsb-release (common in install instructions for CLIs) installed
     && apt-get -y install git iproute2 procps lsb-release \
     #
+    # We're using SQLite so let's grab the CLI tools
+    && apt-get -y install sqlite3 \
+    #
     # Setup zsh, Antigen, and Oh My ZSH!
     && apt-get -y install zsh zsh-antigen \
     && cp /etc/zshrc_default ~/.zshrc \
@@ -39,8 +42,8 @@ RUN apt-get update \
     && cp /etc/p10k_default ~/.p10k.zsh \
     #
     # Update Python environment based on requirements.txt
-    # && pip --disable-pip-version-check --no-cache-dir install -r /tmp/pip-tmp/requirements.txt \
-    # && rm -rf /tmp/pip-tmp \
+    && pip --disable-pip-version-check --no-cache-dir install -r /tmp/pip-tmp/requirements.txt \
+    && rm -rf /tmp/pip-tmp \
     #
     # Create a non-root user to use if preferred - see https://aka.ms/vscode-remote/containers/non-root-user.
     && groupadd --gid $USER_GID $USERNAME \
@@ -57,5 +60,3 @@ RUN apt-get update \
 
 # Switch back to dialog for any ad-hoc use of apt-get
 ENV DEBIAN_FRONTEND=
-
-
