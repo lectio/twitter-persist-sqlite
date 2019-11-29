@@ -5,7 +5,7 @@ CURRENT_DIR_PATH := $(shell echo `pwd`)
 CURRENT_DIR_NAME := $(shell basename `pwd`)
 
 TWITTER_AUTH_FILE := ./twitter-credentials.json
-CONTENT_DB_FILE := ./twitter-content.db.sqlite
+CONTENT_DB_FILE := ./twitter-content.sqlite.db
 
 T2S_INSTALLED := $(shell command -v twitter-to-sqlite 2> /dev/null)
 check-t2s:
