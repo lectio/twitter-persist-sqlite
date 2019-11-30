@@ -22,3 +22,7 @@ Twitter credentials are required, which may be obtained at https://developer.twi
 
 * Install [Meslo LG M Regular for Powerline.ttf](https://github.com/powerline/fonts/tree/master/Meslo%20Slashed) font for improved terminal typeface. This font is already set in devcontainer.json settings. 
 * The default shell is /bin/zsh
+
+# TODO
+
+* Integrate [SQLite Web](https://github.com/coleifer/sqlite-web) database management utility to allow editing and viewing of databases.
