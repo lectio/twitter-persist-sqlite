@@ -39,6 +39,10 @@ user-timeline: $(TWITTER_AUTH_FILE)
 search: $(TWITTER_AUTH_FILE) $(SOURCES_DB_FILE)
 	twitter-to-sqlite search $(CONTENT_DB_FILE) "#HealthcareIT" --auth $(TWITTER_AUTH_FILE)
 
+## Run the twitter to URL pipeline
+pipeline:
+	python pipeline.py --sql-engine-url sqlite:///$(CONTENT_DB_FILE)
+
 ## Reduce the size of SQLite databases by running OPTIMIZE for full text search tables, then VACUUM
 compact:
 	sqlite-utils optimize $(CONTENT_DB_FILE)
