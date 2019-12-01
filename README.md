@@ -15,8 +15,12 @@ Twitter credentials are required, which may be obtained at https://developer.twi
 ## Dev Container setup
 
 * Uses default Python 3 configuration from Microsoft
-* Uses Netspective default setup for zsh + Antigen + Oh My ZSH!
-* Uses Netspective [Powerlevel9k](https://github.com/romkatv/powerlevel10k) ZSH theme
+* Installs Netspective default setup for zsh + Antigen + Oh My ZSH!
+* Installs [Powerlevel9k](https://github.com/romkatv/powerlevel10k) ZSH theme through Antigen
+* Installs SQLite 3.x from Debian
+* Installs Latest JDK from Debian
+* Installs [SchemaSpy](http://schemaspy.org/) database documentation tool from GitHub
+* Installs Xerial SQLite JDBC Driver from BitBucket
 
 ## Visual Studio setup
 

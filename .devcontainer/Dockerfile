@@ -32,8 +32,13 @@ RUN apt-get update \
     # Verify git, process tools, lsb-release (common in install instructions for CLIs) installed
     && apt-get -y install git iproute2 procps lsb-release \
     #
-    # We're using SQLite so let's grab the CLI tools
+    # We're using SQLite so let's grab database CLI tools
     && apt-get -y install sqlite3 \
+    #
+    # Install Java and Graphviz so we can run SchemaSpy db documentation utilities
+    && apt-get -y install default-jdk graphviz \
+    && wget -O "/usr/local/bin/schemaspy.jar" 'https://github.com/schemaspy/schemaspy/releases/download/v6.1.0/schemaspy-6.1.0.jar' \
+    && wget -O "/usr/local/bin/sqlite-jdbc.jar" 'https://bitbucket.org/xerial/sqlite-jdbc/downloads/sqlite-jdbc-3.27.2.1.jar' \
     #
     # Setup zsh, Antigen, and Oh My ZSH!
     && apt-get -y install zsh zsh-antigen \

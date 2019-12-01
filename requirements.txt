@@ -1,1 +1,5 @@
 twitter-to-sqlite
+bonobo
+sqlitebiter
+datasette
+sqlite-utils

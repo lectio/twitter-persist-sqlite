@@ -2,46 +2,81 @@ SHELL := /bin/bash
 MAKEFLAGS := silent
 
 TWITTER_AUTH_FILE := ./twitter-credentials.json
-CONTENT_DB_FILE := ./twitter-content.sqlite.db
+
+DB_HOME := db
+CONTENT_DB_FILE := $(DB_HOME)/twitter-content.sqlite.db
+SOURCES_DB_FILE := $(DB_HOME)/twitter-sources.sqlite.db
+
+DOC_SCHEMA_HOME := doc/schema
+DOC_SCHEMA_CONTENT_HOME := $(DOC_SCHEMA_HOME)/$(CONTENT_DB_FILE)
+DOC_SCHEMA_SOURCES_HOME := $(DOC_SCHEMA_HOME)/$(SOURCES_DB_FILE)
 
 $(TWITTER_AUTH_FILE):
 	echo "Twitter Credentials file $(TWITTER_AUTH_FILE) is missing. Run 'make auth'."
 	exit
 
+$(SOURCES_DB_FILE):
+	sqlitebiter -o $(SOURCES_DB_FILE) file conf/influencers.csv conf/search-criteria.csv
+
+$(DOC_SCHEMA_CONTENT_HOME):
+	java -jar /usr/local/bin/schemaspy.jar -t sqlite-xerial -db $(CONTENT_DB_FILE) -cat % -schemas "Content" -sso -dp /usr/local/bin/sqlite-jdbc.jar -o $(DOC_SCHEMA_CONTENT_HOME)
+
+$(DOC_SCHEMA_SOURCES_HOME):
+	java -jar /usr/local/bin/schemaspy.jar -t sqlite-xerial -db $(SOURCES_DB_FILE) -cat % -schemas "Sources" -sso -dp /usr/local/bin/sqlite-jdbc.jar -o $(DOC_SCHEMA_SOURCES_HOME)
+
+## Create the Twitter sources database so it can be used by other targets
+sources: $(SOURCES_DB_FILE)
+
+## Prepare the Twitter Credentials file, required by the other targets
 auth:
 	twitter-to-sqlite auth --auth $(TWITTER_AUTH_FILE)
 
+## Pull all the Tweets for the authorized user (the one whose credentials are being used)
 user-timeline: $(TWITTER_AUTH_FILE)
 	twitter-to-sqlite user-timeline $(CONTENT_DB_FILE) --auth $(TWITTER_AUTH_FILE)
 
-search: $(TWITTER_AUTH_FILE)
+## Using criteria in the sources database, run searches and populate Tweets in the content database
+search: $(TWITTER_AUTH_FILE) $(SOURCES_DB_FILE)
 	twitter-to-sqlite search $(CONTENT_DB_FILE) "#HealthcareIT" --auth $(TWITTER_AUTH_FILE)
 
+## Reduce the size of SQLite databases by running OPTIMIZE for full text search tables, then VACUUM
 compact:
-	sqlite3 $(CONTENT_DB_FILE) "VACUUM;"
+	sqlite-utils optimize $(CONTENT_DB_FILE)
 
-## See if all developer dependencies are installed
-check-dependencies: check-t2s check-sqlite
-	printf "[*] "
-	make -v | head -1
-	echo "[*] Shell: $$SHELL"
+## Create schema documentation for all the databases in this package
+schema-doc: sources $(DOC_SCHEMA_CONTENT_HOME) $(DOC_SCHEMA_SOURCES_HOME)
 
-T2S_INSTALLED := $(shell command -v twitter-to-sqlite 2> /dev/null)
-check-t2s:
-ifndef T2S_INSTALLED
-	echo "[ ] Did not find twitter-to-sqlite, run this to set it up:"
-	echo "    pip install twitter-to-sqlite"
-else
-	printf "[*] "
-	twitter-to-sqlite --version
-endif
+## Remove all derived artifacts
+clean:
+	rm -f $(SOURCES_DB_FILE)
+	rm -rf $(DOC_SCHEMA_HOME)
 
-SQLITE_INSTALLED := $(shell command -v sqlite3 2> /dev/null)
-check-sqlite:
-ifndef SQLITE_INSTALLED
-	echo "[ ] Did not find SQLite, install sqlite3 using package manager."
-else
-	printf "[*] SQLite "
-	sqlite3 --version
-endif
+TARGET_MAX_CHAR_NUM=15
+# All targets should have a ## Help text above the target and they'll be automatically collected
+# Show help, using auto generator from https://gist.github.com/prwhite/8168133
+help:
+	@echo 'Usage:'
+	@echo '  ${YELLOW}make${RESET} ${GREEN}<target>${RESET}'
+	@echo ''
+	@echo 'Targets:'
+	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
+		helpMessage = match(lastLine, /^## (.*)/); \
+		if (helpMessage) { \
+			helpCommand = substr($$1, 0, index($$1, ":")); \
+			helpMessage = substr(lastLine, RSTART + 3, RLENGTH); \
+			printf "  ${YELLOW}%-$(TARGET_MAX_CHAR_NUM)s${RESET} ${WHITE}%s${RESET}\n", helpCommand, helpMessage; \
+		} \
+	} \
+	{ lastLine = $$0 }' $(MAKEFILE_LIST)
 
+GREEN  := $(shell tput -Txterm setaf 2)
+YELLOW := $(shell tput -Txterm setaf 3)
+WHITE  := $(shell tput -Txterm setaf 7)
+RESET  := $(shell tput -Txterm sgr0)
+
+comma := ,
+define logInfo
+	if [ "$(CCF_LOG_LEVEL)" = 'INFO' ]; then
+		echo "$1"
+	fi
+endef
