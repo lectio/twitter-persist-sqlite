@@ -34,7 +34,11 @@
 		"ms-azuretools.vscode-docker",
 		"mechatroner.rainbow-csv",
 		"alexcvzz.vscode-sqlite",
-		"coenraads.bracket-pair-colorizer-2"
+		"coenraads.bracket-pair-colorizer-2",
+		"esbenp.prettier-vscode",
+		"eamodio.gitlens",
+		"visualstudioexptteam.vscodeintellicode",
+		"christian-kohler.path-intellisense"
 	],
 	"runArgs": [
 		"--hostname", "devcontainer"
