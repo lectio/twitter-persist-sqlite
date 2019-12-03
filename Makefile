@@ -13,6 +13,8 @@ DOC_SCHEMA_SOURCES_HOME := $(DOC_SCHEMA_HOME)/$(SOURCES_DB_FILE)
 
 $(TWITTER_AUTH_FILE):
 	echo "Twitter Credentials file $(TWITTER_AUTH_FILE) is missing. Run 'make auth'."
+	echo "Use https://developer.twitter.com/en/apps to find your Twitter app credentials."
+	echo ""
 	exit
 
 $(SOURCES_DB_FILE):
