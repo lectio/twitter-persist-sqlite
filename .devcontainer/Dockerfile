@@ -15,19 +15,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG USERNAME=vscode
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
+ENV DCC_HOME=/etc/devcontainer-common
 
 # Uncomment the following COPY line and the corresponding lines in the `RUN` command if you wish to
 # include your requirements in the image itself. It is suggested that you only do this if your
 # requirements rarely (if ever) change.
 COPY requirements.txt /tmp/pip-tmp/
 
-# Configure apt and install packages
-COPY .devcontainer/.zshrc /etc/zshrc_default
-COPY .devcontainer/.antigenrc /etc/antigenrc_default
-COPY .devcontainer/.p10k.zsh /etc/p10k_default
-
 RUN apt-get update \
     && apt-get -y install --no-install-recommends apt-utils dialog 2>&1 \
+    #
+    # Install the files that help prepare common devcontainer artifacts into $DCC_HOME
+    && apt-get -y install curl \
+    && curl https://raw.githubusercontent.com/shah/devcontainer-common/master/bootstrap-DCC.sh | /bin/bash \
     #
     # Verify git, process tools, lsb-release (common in install instructions for CLIs) installed
     && apt-get -y install git iproute2 procps lsb-release \
@@ -40,11 +40,8 @@ RUN apt-get update \
     && wget -O "/usr/local/bin/schemaspy.jar" 'https://github.com/schemaspy/schemaspy/releases/download/v6.1.0/schemaspy-6.1.0.jar' \
     && wget -O "/usr/local/bin/sqlite-jdbc.jar" 'https://bitbucket.org/xerial/sqlite-jdbc/downloads/sqlite-jdbc-3.27.2.1.jar' \
     #
-    # Setup zsh, Antigen, and Oh My ZSH!
-    && apt-get -y install zsh zsh-antigen \
-    && cp /etc/zshrc_default ~/.zshrc \
-    && cp /etc/antigenrc_default ~/.antigenrc \
-    && cp /etc/p10k_default ~/.p10k.zsh \
+    # Setup common devcontainer shell
+    && /bin/bash $DCC_HOME/setup-shell.sh \
     #
     # Update Python environment based on requirements.txt
     && pip --disable-pip-version-check --no-cache-dir install -r /tmp/pip-tmp/requirements.txt \
