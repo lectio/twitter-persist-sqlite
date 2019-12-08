@@ -14,7 +14,7 @@ from furl import furl
 from slugify import slugify
 from urlextract import URLExtract
 
-urlCacheDB_DDL_init = [
+processedContentDB_SQL_DDL = [
     "CREATE TABLE IF NOT EXISTS url_cache(url TEXT PRIMARY KEY, http_status_code INT, tweet_id INT, tweet BLOB, url_after_redirects TEXT, message TEXT)",
     "CREATE INDEX IF NOT EXISTS url_cache_pk ON url_cache(url)",
     "CREATE INDEX IF NOT EXISTS url_cache_tweet_id ON url_cache(tweet_id)",
@@ -111,7 +111,7 @@ def get_services(content_unprocessed_db_url, content_processed_db, http_request_
 
     content_processed_db_conn = sqlite3.Connection(content_processed_db, timeout=60, check_same_thread=False)
     with content_processed_db_conn as conn:
-        for ddl in urlCacheDB_DDL_init:
+        for ddl in processedContentDB_SQL_DDL:
             try:
                 conn.execute(ddl)
             except Exception as e:
