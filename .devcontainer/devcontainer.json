@@ -10,11 +10,11 @@
 	"settings": { 
 		"explorer.openEditors.visible": 0,
 		"terminal.integrated.shell.linux": "/bin/zsh",
+		"terminal.integrated.fontFamily": "Meslo LG M DZ for Powerline",
 		"python.pythonPath": "/usr/local/bin/python",
 		"python.linting.enabled": true,
 		"python.linting.pylintEnabled": true,
-		"python.linting.pylintPath": "/usr/local/bin/pylint",
-		"terminal.integrated.fontFamily": "Meslo LG M DZ for Powerline"
+		"python.linting.pylintPath": "/usr/local/bin/pylint"
 	},
 
 	// Developers can run [Datasette](https://github.com/simonw/datasette), which defaults to port 8001
@@ -38,7 +38,10 @@
 		"esbenp.prettier-vscode",
 		"eamodio.gitlens",
 		"visualstudioexptteam.vscodeintellicode",
-		"christian-kohler.path-intellisense"
+		"christian-kohler.path-intellisense",
+		"heptio.jsonnet",
+		"xrc-inc.jsonnet-formatter",
+		"jebbs.plantuml"
 	],
 	"runArgs": [
 		"--hostname", "devcontainer"

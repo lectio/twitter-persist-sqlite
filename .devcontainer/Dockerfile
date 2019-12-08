@@ -27,7 +27,7 @@ RUN apt-get update \
     #
     # Install the files that help prepare common devcontainer artifacts into $DCC_HOME
     && apt-get -y install curl \
-    && curl https://raw.githubusercontent.com/shah/devcontainer-common/master/bootstrap-DCC.sh | /bin/bash \
+    && curl https://raw.githubusercontent.com/shah/devcontainer-common/master/bootstrap.sh | /bin/bash \
     #
     # Verify git, process tools, lsb-release (common in install instructions for CLIs) installed
     && apt-get -y install git iproute2 procps lsb-release \
