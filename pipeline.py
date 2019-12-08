@@ -1,5 +1,4 @@
 import bonobo
-import frontmatter
 import json
 import pickle
 import re
@@ -11,12 +10,6 @@ import uuid
 
 from bonobo.config import use
 from bonobo.constants import NOT_MODIFIED
-from cachecontrol import CacheControl
-from cachecontrol.caches.file_cache import FileCache
-from datetime import timedelta
-from frontmatter import Post
-from frontmatter.default_handlers import YAMLHandler
-from fs import open_fs
 from furl import furl
 from slugify import slugify
 from urlextract import URLExtract

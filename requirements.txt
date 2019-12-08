@@ -10,12 +10,6 @@ idna
 uritools
 appdirs
 requests
-requests_cache
-CacheControl
-cachecontrol[filecache]
 furl
-python-frontmatter
 python-slugify
-fs
 tldextract
-lockfile
