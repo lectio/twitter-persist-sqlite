@@ -49,7 +49,8 @@ pipeline:
 	python pipeline.py \
 		--content-unprocessed-db-url sqlite:///$(CONTENT_UNPROCESSED_DB_FILE) \
 		--content-processed-db $(CONTENT_PROCESSED_DB_FILE) \
-		--http-request-timeout-secs 5
+		--http-request-timeout-secs 5 \
+		--config-url pipeline.conf.yaml
 
 ## Reduce the size of SQLite databases by running OPTIMIZE for full text search tables, then VACUUM
 compact:

@@ -1,0 +1,9 @@
+ignore_url_patterns:
+- reg_exp_pattern_str: ^https://twitter.com/(.*?)/status/(.*)$
+  ignore_case: True
+- reg_exp_pattern_str: https://t.co
+  ignore_case: True
+
+remove_params_from_url_query_strs:
+- reg_exp_pattern_str: ^utm_
+  ignore_case: True

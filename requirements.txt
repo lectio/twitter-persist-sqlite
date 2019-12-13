@@ -13,3 +13,4 @@ requests
 furl
 python-slugify
 tldextract
+pyyaml

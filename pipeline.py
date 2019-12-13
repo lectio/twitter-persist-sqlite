@@ -7,6 +7,7 @@ import sqlalchemy as db
 import sqlite3
 import tldextract
 import uuid
+import yaml
 
 from bonobo.config import use
 from bonobo.constants import NOT_MODIFIED
@@ -32,10 +33,10 @@ def get_tweets_with_urls(content_unprocessed_engine, url_extractor):
             yield url, tweet
     connection.close()
 
-@use('ignore_url_patterns')
-def filter_ignored_urls(url, tweet, ignore_url_patterns):
-    for p in ignore_url_patterns:
-        if p.match(url):
+@use('config')
+def filter_ignored_urls(url, tweet, config):
+    for p in config['ignore_url_patterns']:
+        if p['reg_exp'].match(url):
             return False
     yield NOT_MODIFIED 
 
@@ -60,13 +61,13 @@ def filter_valid_urls(url, tweet, content_processed_db_conn, http, http_request_
             conn.execute('INSERT INTO url_cache (http_status_code, message, url, tweet_id, tweet) VALUES (?, ?, ?, ?, ?)', (-1, str(e), url, tweet['id'], pickle.dumps(tweet)))
             return False
 
-@use('remove_params_from_url_query_strs')
-def clean_url_params(url_after_redirects, tweet, orig_url, remove_params_from_url_query_strs):
+@use('config')
+def clean_url_params(url_after_redirects, tweet, orig_url, config):
     final_furl = furl(url_after_redirects)
     params_removed = []
     for arg in final_furl.args:
-        for p in remove_params_from_url_query_strs:
-            if p.match(arg):
+        for p in config['remove_params_from_url_query_strs']:
+            if p['reg_exp'].match(arg):
                 params_removed.append(arg)
     for param in params_removed:
         del final_furl.args[param]
@@ -95,16 +96,23 @@ def get_graph(**options):
     )
     return graph
 
-def get_services(content_unprocessed_db_url, content_processed_db, http_request_timeout_secs):
+def configure(config_url):
+    config = {}
+    try:
+        with open(config_url) as configfile_contents:
+            config = yaml.safe_load(configfile_contents)        
+        for p in config['ignore_url_patterns'] + config['remove_params_from_url_query_strs']:
+            flags = re.IGNORECASE if p['ignore_case'] == True else 0
+            p['reg_exp'] = re.compile(p['reg_exp_pattern_str'], flags)
+    except Exception as e:
+        print("Unable to load config from URL: ", config_url, str(e))
+        exit(-1)
+    return config
+
+def get_services(config_url, content_unprocessed_db_url, content_processed_db, http_request_timeout_secs):
     content_unprocessed_engine = db.create_engine(content_unprocessed_db_url)
     url_extractor = URLExtract()
-    ignore_url_patterns = [
-        re.compile('^https://twitter.com/(.*?)/status/(.*)$', re.IGNORECASE),
-        re.compile('https://t.co')
-    ]
-    remove_params_from_url_query_strs = [
-        re.compile('^utm_')
-    ]
+    config = configure(config_url)
 
     http = requests.Session()
     http.headers = {'User-Agent': 'Lectio'}
@@ -121,11 +129,10 @@ def get_services(content_unprocessed_db_url, content_processed_db, http_request_
     return { 
         'content_unprocessed_engine': content_unprocessed_engine,
         'url_extractor' : url_extractor,
-        'ignore_url_patterns' : ignore_url_patterns,
         'http' : http,
         'content_processed_db_conn' : content_processed_db_conn,
         'http_request_timeout_secs' : http_request_timeout_secs,
-        'remove_params_from_url_query_strs' : remove_params_from_url_query_strs
+        'config' : config
     }
 
 if __name__ == '__main__':
@@ -133,6 +140,7 @@ if __name__ == '__main__':
     parser.add_argument('--content-unprocessed-db-url', action='store', required=True)
     parser.add_argument('--content-processed-db', action='store', required=True)
     parser.add_argument('--http-request-timeout-secs', action='store', required=True, type=int)
+    parser.add_argument('--config-url', action='store', required=True)
 
     with bonobo.parse_args(parser) as options:
         bonobo.run(get_graph(**options), services=get_services(**options))
