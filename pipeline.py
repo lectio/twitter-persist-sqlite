@@ -76,8 +76,8 @@ def clean_url_params(url_after_redirects, tweet, orig_url, remove_params_from_ur
 def process_url_content(final_furl, tweet, orig_url, params_removed, content_processed_db_conn):
     final_url = final_furl.url
     with content_processed_db_conn as conn:
-        for row in conn.execute('SELECT final_url FROM url_content WHERE final_url = ?', (final_url,)):
-            return False
+        for _ in conn.execute('SELECT final_url FROM url_content WHERE final_url = ?', (final_url,)):
+            return NOT_MODIFIED
         link_brand = tldextract.extract(final_url)
         link_brand_fqdn = re.sub(r"^www[0-9]?\.", "", link_brand.fqdn)
         slug = slugify(str(final_furl.path))
