@@ -48,6 +48,8 @@ search: $(TWITTER_AUTH_FILE) $(SOURCES_DB_FILE)
 pipeline:
 	python pipeline.py \
 		--content-unprocessed-db-url sqlite:///$(CONTENT_UNPROCESSED_DB_FILE) \
+		--content-unprocessed-db-source-row-sql "select id, full_text from tweets" \
+		--content-unprocessed-db-source-text-col-name "full_text" \
 		--content-processed-db $(CONTENT_PROCESSED_DB_FILE) \
 		--http-request-timeout-secs 5 \
 		--config-url pipeline.conf.yaml
