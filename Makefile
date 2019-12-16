@@ -13,10 +13,7 @@ DOC_SCHEMA_CONTENT_HOME := $(DOC_SCHEMA_HOME)/$(TTS_SOURCE_DB_FILE)
 DOC_SCHEMA_SOURCES_HOME := $(DOC_SCHEMA_HOME)/$(TTS_CRITERIA_DB_FILE)
 
 $(TWITTER_AUTH_FILE):
-	echo "Twitter Credentials file $(TWITTER_AUTH_FILE) is missing. Run 'make auth'."
-	echo "Use https://developer.twitter.com/en/apps to find your Twitter app credentials."
-	echo ""
-	exit
+	$(error $(NEWLINE)Twitter Credentials file $(YELLOW)$(TWITTER_AUTH_FILE)$(RESET) is missing.$(NEWLINE)Run $(GREEN)'make auth'$(RESET).$(NEWLINE)Use $(YELLOW)https://developer.twitter.com/en/apps$(RESET) to find your Twitter app credentials)
 
 $(TTS_CRITERIA_DB_FILE):
 	sqlitebiter -o $(TTS_CRITERIA_DB_FILE) file criteria/influencers.csv criteria/search-queries.csv
@@ -92,4 +89,9 @@ define logInfo
 	if [ "$(CCF_LOG_LEVEL)" = 'INFO' ]; then
 		echo "$1"
 	fi
+endef
+
+define NEWLINE
+
+
 endef
