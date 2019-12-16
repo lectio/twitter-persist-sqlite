@@ -4,15 +4,13 @@ MAKEFLAGS := silent
 TWITTER_AUTH_FILE := ./twitter-credentials.json
 
 DB_HOME := db
-CONTENT_UNPROCESSED_DB_FILE := $(DB_HOME)/twitter-content-unprocessed.sqlite
-SOURCES_DB_FILE := $(DB_HOME)/twitter-sources.sqlite
+TTS_SOURCE_DB_FILE := $(DB_HOME)/twitter-to-sqlite-unprocessed.sqlite
+TTS_CRITERIA_DB_FILE := $(DB_HOME)/twitter-to-sqlite-criteria.sqlite
 CONTENT_PROCESSED_DB_FILE := $(DB_HOME)/twitter-content-processed.sqlite
 
 DOC_SCHEMA_HOME := doc/schema
-DOC_SCHEMA_CONTENT_HOME := $(DOC_SCHEMA_HOME)/$(CONTENT_UNPROCESSED_DB_FILE)
-DOC_SCHEMA_SOURCES_HOME := $(DOC_SCHEMA_HOME)/$(SOURCES_DB_FILE)
-
-TWEETS_WITH_URLS_MDCONTENT_HOME := ./content/tweets
+DOC_SCHEMA_CONTENT_HOME := $(DOC_SCHEMA_HOME)/$(TTS_SOURCE_DB_FILE)
+DOC_SCHEMA_SOURCES_HOME := $(DOC_SCHEMA_HOME)/$(TTS_CRITERIA_DB_FILE)
 
 $(TWITTER_AUTH_FILE):
 	echo "Twitter Credentials file $(TWITTER_AUTH_FILE) is missing. Run 'make auth'."
@@ -20,17 +18,17 @@ $(TWITTER_AUTH_FILE):
 	echo ""
 	exit
 
-$(SOURCES_DB_FILE):
-	sqlitebiter -o $(SOURCES_DB_FILE) file conf/influencers.csv conf/search-criteria.csv
+$(TTS_CRITERIA_DB_FILE):
+	sqlitebiter -o $(TTS_CRITERIA_DB_FILE) file criteria/influencers.csv criteria/search-queries.csv
 
 $(DOC_SCHEMA_CONTENT_HOME):
-	java -jar /usr/local/bin/schemaspy.jar -t sqlite-xerial -db $(CONTENT_UNPROCESSED_DB_FILE) -cat % -schemas "Content" -sso -dp /usr/local/bin/sqlite-jdbc.jar -o $(DOC_SCHEMA_CONTENT_HOME)
+	java -jar /usr/local/bin/schemaspy.jar -t sqlite-xerial -db $(TTS_SOURCE_DB_FILE) -cat % -schemas "Content" -sso -dp /usr/local/bin/sqlite-jdbc.jar -o $(DOC_SCHEMA_CONTENT_HOME)
 
 $(DOC_SCHEMA_SOURCES_HOME):
-	java -jar /usr/local/bin/schemaspy.jar -t sqlite-xerial -db $(SOURCES_DB_FILE) -cat % -schemas "Sources" -sso -dp /usr/local/bin/sqlite-jdbc.jar -o $(DOC_SCHEMA_SOURCES_HOME)
+	java -jar /usr/local/bin/schemaspy.jar -t sqlite-xerial -db $(TTS_CRITERIA_DB_FILE) -cat % -schemas "Sources" -sso -dp /usr/local/bin/sqlite-jdbc.jar -o $(DOC_SCHEMA_SOURCES_HOME)
 
-## Create the Twitter sources database so it can be used by other targets
-sources: $(SOURCES_DB_FILE)
+## Create the Twitter criteria database so it can be used by other targets
+criteria: $(TTS_CRITERIA_DB_FILE)
 
 ## Prepare the Twitter Credentials file, required by the other targets
 auth:
@@ -38,33 +36,32 @@ auth:
 
 ## Pull all the Tweets for the authorized user (the one whose credentials are being used)
 user-timeline: $(TWITTER_AUTH_FILE)
-	twitter-to-sqlite user-timeline $(CONTENT_UNPROCESSED_DB_FILE) --auth $(TWITTER_AUTH_FILE)
+	twitter-to-sqlite user-timeline $(TTS_SOURCE_DB_FILE) --auth $(TWITTER_AUTH_FILE)
 
-## Using criteria in the sources database, run searches and populate Tweets in the content database
-search: $(TWITTER_AUTH_FILE) $(SOURCES_DB_FILE)
-	twitter-to-sqlite search $(CONTENT_UNPROCESSED_DB_FILE) "#HealthcareIT" --auth $(TWITTER_AUTH_FILE)
+.ONESHELL:
+## Using queries in the criteria database, run searches and populate Tweets in the content database
+search: $(TWITTER_AUTH_FILE) $(TTS_CRITERIA_DB_FILE)
+	sqlite3 $(TTS_CRITERIA_DB_FILE) "SELECT query FROM search_queries" | while read query
+	do
+		echo "Searching Twitter for '$$query' using twitter-to-sqlite, storing in $(TTS_SOURCE_DB_FILE)"
+		twitter-to-sqlite search $(TTS_SOURCE_DB_FILE) "$$query" --auth $(TWITTER_AUTH_FILE) --since
+	done
 
 ## Run the twitter to URL pipeline
 pipeline:
-	python pipeline.py \
-		--content-unprocessed-db-url sqlite:///$(CONTENT_UNPROCESSED_DB_FILE) \
-		--content-unprocessed-db-source-row-sql "select id, full_text from tweets" \
-		--content-unprocessed-db-source-text-col-name "full_text" \
-		--content-processed-db $(CONTENT_PROCESSED_DB_FILE) \
-		--http-request-timeout-secs 5 \
-		--config-url pipeline.conf.yaml
+	python pipeline.py --config-url pipeline.conf.yaml
 
 ## Reduce the size of SQLite databases by running OPTIMIZE for full text search tables, then VACUUM
 compact:
-	sqlite-utils optimize $(CONTENT_UNPROCESSED_DB_FILE)
+	sqlite-utils optimize $(TTS_SOURCE_DB_FILE)
 	sqlite-utils optimize $(CONTENT_PROCESSED_DB_FILE)
 
 ## Create schema documentation for all the databases in this package
-schema-doc: sources $(DOC_SCHEMA_CONTENT_HOME) $(DOC_SCHEMA_SOURCES_HOME)
+schema-doc: criteria $(DOC_SCHEMA_CONTENT_HOME) $(DOC_SCHEMA_SOURCES_HOME)
 
 ## Remove all derived artifacts
 clean:
-	rm -f $(SOURCES_DB_FILE)
+	rm -f $(TTS_CRITERIA_DB_FILE)
 	rm -rf $(DOC_SCHEMA_HOME)
 
 TARGET_MAX_CHAR_NUM=15

@@ -1,165 +1,339 @@
 import bonobo
 import json
-import pickle
 import re
 import requests
-import sqlalchemy as db
-import sqlite3
 import tldextract
 import uuid
 import yaml
 
 from bonobo.config import use
 from bonobo.constants import NOT_MODIFIED
+from datetime import datetime
 from furl import furl
+from peewee import (
+    Model,
+    CharField,
+    TextField,
+    AutoField,
+    DateTimeField,
+    ForeignKeyField,
+    CompositeKey,
+)
+from playhouse.sqlite_ext import SqliteExtDatabase as SqliteDatabase
 from slugify import slugify
+from ucache import SqliteCache
 from urlextract import URLExtract
+import time
 
-processedContentDB_SQL_DDL = [
-    "CREATE TABLE IF NOT EXISTS url_source(id INTEGER PRIMARY KEY AUTOINCREMENT, engine_url TEXT, created_on TIMESTAMP, remarks TEXT)",
-    "CREATE INDEX IF NOT EXISTS url_source_pk ON url_source(id)",
+# Number of sections to keep trying to write while db is locked
+DESTDB_LOCKED_RETRIES_COUNT = 10
 
-    "CREATE TABLE IF NOT EXISTS url_cache(url TEXT PRIMARY KEY, source_id INTEGER, http_status_code INT, source_row BLOB, url_after_redirects TEXT, message TEXT)",
-    "CREATE INDEX IF NOT EXISTS url_cache_pk ON url_cache(url)",
+# we're going to initialize this later
+destDB = SqliteDatabase(None)
 
-    "CREATE TABLE IF NOT EXISTS url_content(final_url TEXT PRIMARY KEY, orig_url TEXT, link_brand_fqdn TEXT, slug TEXT, source_id INTEGER, source_row JSON)",
-    "CREATE INDEX IF NOT EXISTS url_content_pk ON url_content(final_url)",
-]
 
-@use('content_unprocessed_engine', 'url_extractor', 'content_unprocessed_db_source_row_sql', 'content_unprocessed_db_source_text_col_name')
-def get_text_with_urls(content_unprocessed_engine, url_extractor, content_unprocessed_db_source_row_sql, content_unprocessed_db_source_text_col_name):
-    connection = content_unprocessed_engine.connect()
-    result = connection.execute(content_unprocessed_db_source_row_sql)
-    for row in result:
-        for url in url_extractor.find_urls(row[content_unprocessed_db_source_text_col_name], True):
-            yield url, row
-    connection.close()
+class BaseModel(Model):
+    class Meta:
+        database = destDB
+        legacy_table_names = False
 
-@use('config')
-def filter_ignored_urls(url, row, config):
-    for p in config['ignore_url_patterns']:
-        if p['reg_exp'].match(url):
-            return False
-    yield NOT_MODIFIED 
 
-@use('content_processed_db_conn', 'source_id', 'http', 'http_request_timeout_secs')
-def filter_valid_urls(url, row, content_processed_db_conn, source_id, http, http_request_timeout_secs):
-    with content_processed_db_conn as conn:
-        for row in conn.execute('SELECT http_status_code, source_row, url_after_redirects FROM url_cache WHERE url = ?', (url,)):
-            if row[0] == 200:
-                cached_source = pickle.loads(row[1])
-                return row[2], cached_source, url
-            else:
-                return False
+class Execution(BaseModel):
+    id = AutoField()
+    created_on = DateTimeField()
+    config = TextField()
 
+
+class Namespace(BaseModel):
+    id = CharField(primary_key=True, null=True)
+    execution = ForeignKeyField(Execution, backref="execution", column_name="execution_id")
+    created_on = DateTimeField()
+
+
+class SourceText(BaseModel):
+    execution = ForeignKeyField(Execution, backref="execution", column_name="execution_id")
+    namespace = ForeignKeyField(Namespace, backref="namespace", column_name="namespace_id")
+    text_id = CharField(index=True)
+    text = TextField()
+
+    class Meta:
+        primary_key = CompositeKey("namespace", "text_id")
+
+
+class Content(BaseModel):
+    id = AutoField()
+    namespace = ForeignKeyField(Namespace, backref="namespace", column_name="namespace_id")
+    execution = ForeignKeyField(Execution, backref="execution", column_name="execution_id")
+    source_text_id = CharField()
+    created_on = DateTimeField()
+    final_url = TextField()
+    orig_url = TextField()
+    link_brand_fqdn = CharField()
+    path_slug = TextField()
+
+    class Meta:
+        indexes = ((("namespace_id", "source_text_id", "final_url"), True),)
+
+
+class TextPattern:
+    def __init__(self, pattern_str, ignore_case, replace_with=None):
+        self.pattern_str = pattern_str
+        flags = re.IGNORECASE if ignore_case == True else 0
+        self.reg_exp = re.compile(pattern_str, flags)
+        self.replace_with = "" if replace_with is None else replace_with
+
+    def matches(self, text):
+        return self.reg_exp.match(text)
+
+    def replace_all(self, orig_text):
+        return str(self.reg_exp.sub(self.replace_with, orig_text))
+
+
+class TextPatterns:
+    def __init__(self, patterns):
+        self.patterns = patterns
+
+    def match_any(self, text):
+        for p in self.patterns:
+            if p.matches(text):
+                return True
+        return False
+
+    def replace_all(self, orig_text):
+        new_text = orig_text
+        for p in self.patterns:
+            new_text = p.replace_all(new_text)
+        return new_text
+
+
+class Configuration:
+    def __init__(self, config_url):
+        self.config_url = config_url
         try:
-            resp = http.head(url, allow_redirects=True, timeout=http_request_timeout_secs)
-            conn.execute('INSERT INTO url_cache (source_id, http_status_code, url, source_row, url_after_redirects) VALUES (?, ?, ?, ?, ?)', (source_id, resp.status_code, url, pickle.dumps(row), resp.url))
-            if resp.status_code == 200:
-                return resp.url, row, url
-            else:
-                return False            
+            with open(config_url) as configfile_contents:
+                config = yaml.safe_load(configfile_contents)
+            self.source = config["source"]
+            self.destination = config["destination"]
+            self.urls_cache_db = config["caches"]["urls"]["db"]
+            self.urls_cache_item_expire_secs = 60 * 60 * 24 * 30
+            self.http_request_timeout_secs = config["http_request_timeout_secs"]
+            self.ignore_url_patterns = TextPatterns(
+                [
+                    TextPattern(p["reg_exp_pattern_str"], p["ignore_case"])
+                    for p in config["ignore_url_patterns"]
+                ]
+            )
+            self.remove_params_from_url_query_strs = TextPatterns(
+                [
+                    TextPattern(p["reg_exp_pattern_str"], p["ignore_case"])
+                    for p in config["remove_params_from_url_query_strs"]
+                ]
+            )
+            self.link_brand_formatters = TextPatterns(
+                [
+                    TextPattern(
+                        p["find_reg_exp_pattern_str"],
+                        p["ignore_case"],
+                        replace_with=p["replace_reg_exp_pattern_str"],
+                    )
+                    for p in config["link_brand_formatters"]
+                ]
+            )
         except Exception as e:
-            conn.execute('INSERT INTO url_cache (source_id, http_status_code, message, url, source_row) VALUES (?, ?, ?, ?, ?)', (source_id, -1, str(e), url, pickle.dumps(row)))
-            return False
+            print("Unable to load config from URL: ", config_url, str(e))
+            exit(-1)
 
-@use('config')
-def clean_url_params(url_after_redirects, row, orig_url, config):
-    final_furl = furl(url_after_redirects)
-    params_removed = []
-    for arg in final_furl.args:
-        for p in config['remove_params_from_url_query_strs']:
-            if p['reg_exp'].match(arg):
+
+class Link:
+    def __init__(self, config, url, http_status_code, url_after_redirects=None, message=None):
+        self.orig_url = url
+        self.http_status_code = http_status_code
+        self.url_after_redirects = url_after_redirects
+        self.error_message = message
+
+    def is_valid(self):
+        return True if self.http_status_code == 200 else False
+
+    def is_ignored(self):
+        return True if self.http_status_code == -2 else False
+
+    def cleaned(self, config):
+        clean_furl = furl(self.url_after_redirects)
+        params_removed = []
+        for arg in clean_furl.args:
+            if config.remove_params_from_url_query_strs.match_any(arg):
                 params_removed.append(arg)
-    for param in params_removed:
-        del final_furl.args[param]
-    yield final_furl, row, orig_url, params_removed
+        for param in params_removed:
+            del clean_furl.args[param]
+        link_brand_fqdn = config.link_brand_formatters.replace_all(
+            tldextract.extract(clean_furl.url).fqdn
+        )
+        return clean_furl.url, link_brand_fqdn, slugify(str(clean_furl.path))
 
-@use('config', 'content_processed_db_conn', 'source_id')
-def process_url_content(final_furl, row, orig_url, params_removed, config, content_processed_db_conn, source_id):
-    final_url = final_furl.url
-    with content_processed_db_conn as conn:
-        for _ in conn.execute('SELECT final_url FROM url_content WHERE final_url = ?', (final_url,)):
-            return NOT_MODIFIED
-        link_brand = tldextract.extract(final_url)
-        link_brand_fqdn = link_brand.fqdn
-        for f in config['link_brand_formatters']:
-            link_brand_fqdn = f['find_reg_exp'].sub(f['replace_reg_exp_pattern_str'], link_brand_fqdn)
-        slug = slugify(str(final_furl.path))
-        conn.execute('INSERT INTO url_content (source_id, final_url, orig_url, link_brand_fqdn, slug, source_row) VALUES (?, ?, ?, ?, ?, ?)', (source_id, str(final_url), str(orig_url), link_brand_fqdn, str(slug), json.dumps(dict(row))))
-        return final_url, row, orig_url, params_removed, link_brand, slug 
 
-def get_graph(**options):
+class LinkFactory:
+    url_extractor = URLExtract()
+
+    def __init__(self, config):
+        self.config = config
+        self.url_cache = SqliteCache(config.urls_cache_db)
+        self.http = requests.Session()
+        self.http.headers = {"User-Agent": "Lectio"}
+
+    def parse(self, url):
+        link = self.url_cache.get(url)
+        if not link is None:
+            return link
+        try:
+            if self.config.ignore_url_patterns.match_any(url):
+                link = Link(self.config, url, -2, message="Ignored")
+            else:
+                resp = self.http.head(
+                    url, allow_redirects=True, timeout=self.config.http_request_timeout_secs,
+                )
+                if resp.status_code == 200:
+                    link = Link(self.config, url, resp.status_code, url_after_redirects=resp.url)
+                else:
+                    link = Link(
+                        self.config, url, -1, message="Invalid HTTP Status Code " + resp.status_code
+                    )
+        except Exception as e:
+            link = Link(self.config, url, -1, message=str(e))
+        self.url_cache.set(url, link, config.urls_cache_item_expire_secs)
+        return link
+
+    def close(self):
+        self.url_cache.close()
+
+
+@use("config", "source_data_db", "execution")
+def consume_source_rows(config, source_data_db, execution):
+    for row in source_data_db.execute_sql(config.source["rows_sql"]):
+        for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
+            try:
+                source_text, created = SourceText.get_or_create(
+                    namespace_id=config.source["namespace"],
+                    text_id=str(row[config.source["identify_urls_in_text_sql_col_index"]]),
+                    defaults={
+                        "text": row[config.source["extract_urls_from_text_sql_col_index"]],
+                        "execution": execution,
+                    },
+                )
+            except:
+                time.sleep(1)
+                pass
+            finally:
+                break
+        else:
+            return False
+        yield source_text, created
+
+
+def extract_urls(source_text, created):
+    for url in LinkFactory.url_extractor.find_urls(source_text.text, True):
+        yield url, source_text
+
+
+@use("config", "link_factory")
+def parse_urls(url, source_text, config, link_factory):
+    return url, source_text, link_factory.parse(url)
+
+
+def filter_ignore_urls(url, source_text, link):
+    if link.is_ignored():
+        return False
+    else:
+        return url, source_text, link
+
+
+def filter_valid_urls(url, source_text, link):
+    if link.is_valid():
+        return url, source_text, link
+    else:
+        return False
+
+
+@use("config", "execution", "namespace")
+def save_content(url, source_text, link, config, execution, namespace):
+    final_url, link_brand_fqdn, path_slug = link.cleaned(config)
+    # in case the database is locked due to concurrent writes,
+    # keep trying before skipping the url
+    for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
+        try:
+            content, created = Content.get_or_create(
+                namespace=namespace,
+                source_text_id=source_text.text_id,
+                final_url=final_url,
+                defaults={
+                    "execution": execution,
+                    "link_brand_fqdn": link_brand_fqdn,
+                    "orig_url": link.orig_url,
+                    "path_slug": path_slug,
+                    "created_on": datetime.now(),
+                },
+            )
+        except:
+            time.sleep(1)
+            pass
+        finally:
+            break
+    else:
+        return False
+    yield content, created
+
+
+def get_graph(config):
     graph = bonobo.Graph()
     graph.add_chain(
-        get_text_with_urls,
-        filter_ignored_urls,
+        consume_source_rows,
+        extract_urls,
+        parse_urls,
+        filter_ignore_urls,
         filter_valid_urls,
-        clean_url_params,
-        process_url_content,
+        save_content,
     )
     return graph
 
-def configure(config_url):
-    config = {}
-    try:
-        with open(config_url) as configfile_contents:
-            config = yaml.safe_load(configfile_contents)        
-        for p in config['ignore_url_patterns'] + config['remove_params_from_url_query_strs']:
-            flags = re.IGNORECASE if p['ignore_case'] == True else 0
-            p['reg_exp'] = re.compile(p['reg_exp_pattern_str'], flags)
-        for f in config['link_brand_formatters']:
-            flags = re.IGNORECASE if p['ignore_case'] == True else 0
-            f['find_reg_exp'] = re.compile(f['find_reg_exp_pattern_str'], flags)
-            if f['replace_reg_exp_pattern_str'] == None:
-                f['replace_reg_exp_pattern_str'] = ""
-    except Exception as e:
-        print("Unable to load config from URL: ", config_url, str(e))
-        exit(-1)
-    return config
 
-def get_services(config_url, 
-        content_unprocessed_db_url, 
-        content_unprocessed_db_source_row_sql, content_unprocessed_db_source_text_col_name, 
-        content_processed_db, http_request_timeout_secs):
-    content_unprocessed_engine = db.create_engine(content_unprocessed_db_url)
-    url_extractor = URLExtract()
-    config = configure(config_url)
-
-    http = requests.Session()
-    http.headers = {'User-Agent': 'Lectio'}
-
-    content_processed_db_conn = sqlite3.Connection(content_processed_db, timeout=60, check_same_thread=False)
-    with content_processed_db_conn as conn:
-        for ddl in processedContentDB_SQL_DDL:
-            try:
-                conn.execute(ddl)
-            except Exception as e:
-                print("Unable to execute DDL: ", ddl, str(e))
-                exit(-1)
-        result = conn.execute('INSERT INTO url_source (engine_url, created_on) VALUES (?, strftime("%s", CURRENT_TIME))', (str(content_unprocessed_db_url),))
-        source_id = result.lastrowid
-
-    return { 
-        'content_unprocessed_engine': content_unprocessed_engine,
-        'content_unprocessed_db_source_row_sql': content_unprocessed_db_source_row_sql,
-        'content_unprocessed_db_source_text_col_name': content_unprocessed_db_source_text_col_name,
-        'source_id' : source_id,
-        'url_extractor' : url_extractor,
-        'http' : http,
-        'content_processed_db_conn' : content_processed_db_conn,
-        'http_request_timeout_secs' : http_request_timeout_secs,
-        'config' : config
+def get_services(config, link_factory):
+    execution = Execution.create(
+        created_on=datetime.now(),
+        config=json.dumps(
+            config,
+            default=lambda o: o.__dict__ if hasattr(o, "__dict__") else str(o),
+            sort_keys=True,
+            indent=4,
+        ),
+    )
+    namespace, _ = Namespace.get_or_create(
+        id=config.source["namespace"],
+        defaults={"created_on": datetime.now(), "execution": execution},
+    )
+    return {
+        "execution": execution,
+        "namespace": namespace,
+        "config": config,
+        "source_data_db": SqliteDatabase(
+            config.source["db"],
+            pragmas={"journal_mode": "wal", "cache_size": -1024 * 64, "query_only": True},
+        ),
+        "link_factory": link_factory,
     }
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parser = bonobo.get_argument_parser()
-    parser.add_argument('--content-unprocessed-db-url', action='store', required=True)
-    parser.add_argument('--content-unprocessed-db-source-row-sql', action='store', required=True)
-    parser.add_argument('--content-unprocessed-db-source-text-col-name', action='store', required=True)
-    parser.add_argument('--content-processed-db', action='store', required=True)
-    parser.add_argument('--http-request-timeout-secs', action='store', required=True, type=int)
-    parser.add_argument('--config-url', action='store', required=True)
+    parser.add_argument("--config-url", action="store", required=True)
 
     with bonobo.parse_args(parser) as options:
-        bonobo.run(get_graph(**options), services=get_services(**options))
+        config = Configuration(**options)
+        link_factory = LinkFactory(config)
+        destDB.init(
+            config.destination["db"],
+            pragmas={"journal_mode": "wal", "cache_size": -1024 * 64, "busy_timeout": 5000},
+        )
+        destDB.connect()
+        destDB.create_tables([Execution, Namespace, SourceText, Content])
+        bonobo.run(get_graph(config), services=get_services(config, link_factory))
+        link_factory.close()
+        destDB.close()

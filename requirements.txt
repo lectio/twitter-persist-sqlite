@@ -1,6 +1,6 @@
 pylint
 twitter-to-sqlite
-bonobo
+tqdm
 sqlitebiter
 datasette
 sqlite-utils
@@ -14,3 +14,7 @@ furl
 python-slugify
 tldextract
 pyyaml
+bonobo
+ucache
+peewee
+black

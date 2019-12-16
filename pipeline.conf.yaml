@@ -1,14 +1,30 @@
+source:
+  namespace: twitter.com
+  db: db/twitter-to-sqlite-unprocessed.sqlite
+  rows_sql: select full_text, id from tweets
+  extract_urls_from_text_sql_col_index: 0
+  identify_urls_in_text_sql_col_index: 1
+
+destination:
+  db: db/twitter-content-processed.sqlite
+
+caches:
+  urls:
+    db: db/links-cache.sqlite
+
+http_request_timeout_secs: 5
+
 ignore_url_patterns:
-- reg_exp_pattern_str: ^https://twitter.com/(.*?)/status/(.*)$
-  ignore_case: True
-- reg_exp_pattern_str: https://t.co
-  ignore_case: True
+  - reg_exp_pattern_str: ^https://twitter.com/(.*?)/status/(.*)$
+    ignore_case: True
+  - reg_exp_pattern_str: https://t.co
+    ignore_case: True
 
 remove_params_from_url_query_strs:
-- reg_exp_pattern_str: ^utm_
-  ignore_case: True
+  - reg_exp_pattern_str: ^utm_
+    ignore_case: True
 
 link_brand_formatters:
-- find_reg_exp_pattern_str: ^www[0-9]?\.
-  replace_reg_exp_pattern_str:
-  ignore_case: True
+  - find_reg_exp_pattern_str: ^www[0-9]?\.
+    replace_reg_exp_pattern_str:
+    ignore_case: True
