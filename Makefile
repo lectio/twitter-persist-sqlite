@@ -7,6 +7,7 @@ DB_HOME := db
 TTS_SOURCE_DB_FILE := $(DB_HOME)/twitter-to-sqlite-unprocessed.sqlite
 TTS_CRITERIA_DB_FILE := $(DB_HOME)/twitter-to-sqlite-criteria.sqlite
 CONTENT_PROCESSED_DB_FILE := $(DB_HOME)/twitter-content-processed.sqlite
+LINKS_CACHE_DB_FILE := $(DB_HOME)/links-cache.sqlite
 
 DOC_SCHEMA_HOME := doc/schema
 DOC_SCHEMA_CONTENT_HOME := $(DOC_SCHEMA_HOME)/$(TTS_SOURCE_DB_FILE)
@@ -52,6 +53,7 @@ pipeline:
 compact:
 	sqlite-utils optimize $(TTS_SOURCE_DB_FILE)
 	sqlite-utils optimize $(CONTENT_PROCESSED_DB_FILE)
+	sqlite-utils optimize $(LINKS_CACHE_DB_FILE)
 
 ## Create schema documentation for all the databases in this package
 schema-doc: criteria $(DOC_SCHEMA_CONTENT_HOME) $(DOC_SCHEMA_SOURCES_HOME)
