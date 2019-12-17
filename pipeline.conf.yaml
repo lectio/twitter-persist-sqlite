@@ -9,7 +9,7 @@ destination:
   db: db/twitter-content-processed.sqlite
 
 caches:
-  urls:
+  http_requests:
     db: db/links-cache.sqlite
 
 http_request_timeout_secs: 5

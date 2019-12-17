@@ -1,14 +1,17 @@
 import bonobo
+import cgi
 import json
 import re
 import requests
 import tldextract
+import time
 import uuid
 import yaml
 
 from bonobo.config import use
 from bonobo.constants import NOT_MODIFIED
 from datetime import datetime
+from dateutil.parser import parse
 from furl import furl
 from peewee import (
     Model,
@@ -18,23 +21,23 @@ from peewee import (
     DateTimeField,
     ForeignKeyField,
     CompositeKey,
+    IntegerField,
 )
 from playhouse.sqlite_ext import SqliteExtDatabase as SqliteDatabase
 from slugify import slugify
-from ucache import SqliteCache
 from urlextract import URLExtract
-import time
 
 # Number of sections to keep trying to write while db is locked
 DESTDB_LOCKED_RETRIES_COUNT = 10
 
-# we're going to initialize this later
-destDB = SqliteDatabase(None)
+# we're going to initialize these later
+content_db = SqliteDatabase(None)
+request_cache_db = SqliteDatabase(None)
 
 
 class BaseModel(Model):
     class Meta:
-        database = destDB
+        database = content_db
         legacy_table_names = False
 
 
@@ -45,34 +48,43 @@ class Execution(BaseModel):
 
 
 class Namespace(BaseModel):
-    id = CharField(primary_key=True, null=True)
-    execution = ForeignKeyField(Execution, backref="execution", column_name="execution_id")
+    id = CharField(primary_key=True)
+    execution = ForeignKeyField(Execution, column_name="execution_id")
     created_on = DateTimeField()
 
 
-class SourceText(BaseModel):
-    execution = ForeignKeyField(Execution, backref="execution", column_name="execution_id")
-    namespace = ForeignKeyField(Namespace, backref="namespace", column_name="namespace_id")
-    text_id = CharField(index=True)
-    text = TextField()
+class Provenance(BaseModel):
+    id = AutoField()
+    execution = ForeignKeyField(Execution, column_name="execution_id")
+    namespace = ForeignKeyField(Namespace, column_name="namespace_id")
+    from_text_id = CharField(index=True)
+    from_text = TextField()
 
     class Meta:
-        primary_key = CompositeKey("namespace", "text_id")
+        indexes = ((("namespace_id", "from_text_id"), True),)
 
 
 class Content(BaseModel):
     id = AutoField()
-    namespace = ForeignKeyField(Namespace, backref="namespace", column_name="namespace_id")
-    execution = ForeignKeyField(Execution, backref="execution", column_name="execution_id")
-    source_text_id = CharField()
+    namespace = ForeignKeyField(Namespace, column_name="namespace_id")
+    execution = ForeignKeyField(Execution, column_name="execution_id")
+    provenance = ForeignKeyField(Execution, column_name="provenance_id")
     created_on = DateTimeField()
+    anchor_text = TextField(null=True)
+    anchor_markup = TextField(null=True)
     final_url = TextField()
     orig_url = TextField()
     link_brand_fqdn = CharField()
     path_slug = TextField()
+    content_type = CharField(null=True)
+    mime_type = CharField(null=True)
+    mime_options = CharField(null=True)
+    mime_maintype = CharField(null=True)
+    mime_subtype = CharField(null=True)
+    http_resp_headers = TextField()
 
     class Meta:
-        indexes = ((("namespace_id", "source_text_id", "final_url"), True),)
+        indexes = ((("namespace_id", "provenance_id", "final_url"), True),)
 
 
 class TextPattern:
@@ -114,8 +126,7 @@ class Configuration:
                 config = yaml.safe_load(configfile_contents)
             self.source = config["source"]
             self.destination = config["destination"]
-            self.urls_cache_db = config["caches"]["urls"]["db"]
-            self.urls_cache_item_expire_secs = 60 * 60 * 24 * 30
+            self.caches = config["caches"]
             self.http_request_timeout_secs = config["http_request_timeout_secs"]
             self.ignore_url_patterns = TextPatterns(
                 [
@@ -144,12 +155,22 @@ class Configuration:
             exit(-1)
 
 
-class Link:
-    def __init__(self, config, url, http_status_code, url_after_redirects=None, message=None):
-        self.orig_url = url
-        self.http_status_code = http_status_code
-        self.url_after_redirects = url_after_redirects
-        self.error_message = message
+class CachedRequest(Model):
+    orig_url = CharField(primary_key=True, index=True)
+    http_status_code = IntegerField()
+    http_response_url = TextField(index=True, null=True)
+    http_response_headers = TextField(null=True)
+    error_message = TextField(null=True)
+    created_on = DateTimeField()
+    content_type = CharField(null=True)
+    mime_type = CharField(null=True)
+    mime_options = CharField(null=True)
+    mime_maintype = CharField(null=True)
+    mime_subtype = CharField(null=True)
+
+    class Meta:
+        database = request_cache_db
+        legacy_table_names = False
 
     def is_valid(self):
         return True if self.http_status_code == 200 else False
@@ -158,7 +179,7 @@ class Link:
         return True if self.http_status_code == -2 else False
 
     def cleaned(self, config):
-        clean_furl = furl(self.url_after_redirects)
+        clean_furl = furl(self.http_response_url)
         params_removed = []
         for arg in clean_furl.args:
             if config.remove_params_from_url_query_strs.match_any(arg):
@@ -171,98 +192,142 @@ class Link:
         return clean_furl.url, link_brand_fqdn, slugify(str(clean_furl.path))
 
 
-class LinkFactory:
+class RequestFactory:
     url_extractor = URLExtract()
 
     def __init__(self, config):
         self.config = config
-        self.url_cache = SqliteCache(config.urls_cache_db)
         self.http = requests.Session()
         self.http.headers = {"User-Agent": "Lectio"}
+        request_cache_db.init(
+            config.caches["http_requests"]["db"],
+            pragmas={"journal_mode": "wal", "cache_size": -1024 * 64, "busy_timeout": 5000},
+        )
+        request_cache_db.connect()
+        request_cache_db.create_tables([CachedRequest])
 
     def parse(self, url):
-        link = self.url_cache.get(url)
-        if not link is None:
-            return link
+        if self.config.ignore_url_patterns.match_any(url):
+            return CachedRequest(orig_url=url, http_status_code=-2, message="Ignored")
+
+        request = CachedRequest.get_or_none(CachedRequest.orig_url == url)
+        if not request is None:
+            return request
         try:
-            if self.config.ignore_url_patterns.match_any(url):
-                link = Link(self.config, url, -2, message="Ignored")
-            else:
-                resp = self.http.head(
-                    url, allow_redirects=True, timeout=self.config.http_request_timeout_secs,
-                )
-                if resp.status_code == 200:
-                    link = Link(self.config, url, resp.status_code, url_after_redirects=resp.url)
-                else:
-                    link = Link(
-                        self.config, url, -1, message="Invalid HTTP Status Code " + resp.status_code
-                    )
+            resp = self.http.head(
+                url, allow_redirects=True, timeout=self.config.http_request_timeout_secs,
+            )
         except Exception as e:
-            link = Link(self.config, url, -1, message=str(e))
-        self.url_cache.set(url, link, config.urls_cache_item_expire_secs)
-        return link
+            return CachedRequest(
+                orig_url=url, http_status_code=-3, message="Exception during request: " + str(e)
+            )
+
+        if resp.status_code != 200:
+            return CachedRequest(
+                orig_url=url,
+                http_status_code=-1,
+                message="Invalid HTTP Status Code " + str(resp.status_code),
+            )
+
+        content_type = resp.headers.get("Content-Type")
+        if not content_type is None:
+            mime_type, mime_options = cgi.parse_header(content_type)
+            mime_maintype, mime_subtype = mime_type.split("/")
+        else:
+            mime_type, mime_options, mime_maintype, mime_subtype = (None, None, None, None)
+        request = CachedRequest(
+            orig_url=url,
+            http_response_url=resp.url,
+            http_status_code=resp.status_code,
+            http_response_headers=json.dumps(
+                resp.headers,
+                default=lambda o: o.__dict__ if hasattr(o, "__dict__") else str(o),
+                sort_keys=True,
+            ),
+            content_type=content_type,
+            mime_type=mime_type,
+            mime_options=mime_options,
+            mime_maintype=mime_maintype,
+            mime_subtype=mime_subtype,
+        )
+        self.cache(request)
+        return request
+
+    def cache(self, request):
+        for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
+            try:
+                request.created_on = datetime.now()
+                request.save(force_insert=True)
+            except Exception as e:
+                if "OperationalError: database is locked" in str(e):
+                    time.sleep(1)  # wait for the lock to be freed
+                    pass  # try again
+                else:
+                    print(
+                        "RequestFactory.cache error: ", request, e,
+                    )
+                    raise e
+            finally:
+                break
+        else:
+            return False
 
     def close(self):
-        self.url_cache.close()
+        request_cache_db.close()
+
+
+class Origin:
+    def __init__(self, config, row):
+        self.row = row
+        self.from_text_id = str(row[config.source["identify_urls_in_text_sql_col_index"]])
+        self.from_text = row[config.source["extract_urls_from_text_sql_col_index"]]
 
 
 @use("config", "source_data_db", "execution")
 def consume_source_rows(config, source_data_db, execution):
     for row in source_data_db.execute_sql(config.source["rows_sql"]):
-        for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
-            try:
-                source_text, created = SourceText.get_or_create(
-                    namespace_id=config.source["namespace"],
-                    text_id=str(row[config.source["identify_urls_in_text_sql_col_index"]]),
-                    defaults={
-                        "text": row[config.source["extract_urls_from_text_sql_col_index"]],
-                        "execution": execution,
-                    },
-                )
-            except:
-                time.sleep(1)
-                pass
-            finally:
-                break
-        else:
-            return False
-        yield source_text, created
+        yield Origin(config, list(row))
 
 
-def extract_urls(source_text, created):
-    for url in LinkFactory.url_extractor.find_urls(source_text.text, True):
-        yield url, source_text
+def extract_urls(origin):
+    for url in RequestFactory.url_extractor.find_urls(origin.from_text, True):
+        yield url, origin
 
 
 @use("config", "link_factory")
-def parse_urls(url, source_text, config, link_factory):
-    return url, source_text, link_factory.parse(url)
+def parse_urls(url, origin, config, link_factory):
+    return url, origin, link_factory.parse(url)
 
 
-def filter_ignore_urls(url, source_text, link):
+def filter_ignore_urls(url, origin, link):
     if link.is_ignored():
         return False
     else:
-        return url, source_text, link
+        return url, origin, link
 
 
-def filter_valid_urls(url, source_text, link):
+def filter_valid_urls(url, origin, link):
     if link.is_valid():
-        return url, source_text, link
+        return url, origin, link
     else:
         return False
 
 
 @use("config", "execution", "namespace")
-def save_content(url, source_text, link, config, execution, namespace):
+def save_content(url, origin, link, config, execution, namespace):
     final_url, link_brand_fqdn, path_slug = link.cleaned(config)
     # in case the database is locked due to concurrent writes,
     # keep trying before skipping the url
     for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
         try:
-            content, created = Content.get_or_create(
+            provenance, _ = Provenance.get_or_create(
+                namespace_id=config.source["namespace"],
+                from_text_id=str(origin.from_text_id),
+                defaults={"from_text": origin.from_text, "execution": execution},
+            )
+            content, content_created = Content.get_or_create(
                 namespace=namespace,
-                source_text_id=source_text.text_id,
+                provenance=provenance,
                 final_url=final_url,
                 defaults={
                     "execution": execution,
@@ -270,16 +335,26 @@ def save_content(url, source_text, link, config, execution, namespace):
                     "orig_url": link.orig_url,
                     "path_slug": path_slug,
                     "created_on": datetime.now(),
+                    "content_type": link.content_type,
+                    "mime_type": link.mime_type,
+                    "mime_options": link.mime_options,
+                    "mime_maintype": link.mime_maintype,
+                    "mime_subtype": link.mime_subtype,
+                    "http_resp_headers": link.http_response_headers,
                 },
             )
-        except:
-            time.sleep(1)
-            pass
+            yield content, content_created
+        except Exception as e:
+            if "OperationalError: database is locked" in str(e):
+                time.sleep(1)  # wait for the lock to be freed
+                pass  # try again
+            else:
+                print("Error: ", url, origin, link, e)
+                raise e
         finally:
             break
     else:
         return False
-    yield content, created
 
 
 def get_graph(config):
@@ -295,7 +370,7 @@ def get_graph(config):
     return graph
 
 
-def get_services(config, link_factory):
+def get_services(config, source_data_db, link_factory):
     execution = Execution.create(
         created_on=datetime.now(),
         config=json.dumps(
@@ -313,10 +388,7 @@ def get_services(config, link_factory):
         "execution": execution,
         "namespace": namespace,
         "config": config,
-        "source_data_db": SqliteDatabase(
-            config.source["db"],
-            pragmas={"journal_mode": "wal", "cache_size": -1024 * 64, "query_only": True},
-        ),
+        "source_data_db": source_data_db,
         "link_factory": link_factory,
     }
 
@@ -327,13 +399,18 @@ if __name__ == "__main__":
 
     with bonobo.parse_args(parser) as options:
         config = Configuration(**options)
-        link_factory = LinkFactory(config)
-        destDB.init(
+        sourceDB = SqliteDatabase(
+            config.source["db"],
+            pragmas={"journal_mode": "wal", "cache_size": -1024 * 64, "query_only": True},
+        )
+        content_db.init(
             config.destination["db"],
             pragmas={"journal_mode": "wal", "cache_size": -1024 * 64, "busy_timeout": 5000},
         )
-        destDB.connect()
-        destDB.create_tables([Execution, Namespace, SourceText, Content])
-        bonobo.run(get_graph(config), services=get_services(config, link_factory))
+        content_db.connect()
+        content_db.create_tables([Execution, Namespace, Provenance, Content])
+        link_factory = RequestFactory(config)
+        bonobo.run(get_graph(config), services=get_services(config, sourceDB, link_factory))
         link_factory.close()
-        destDB.close()
+        content_db.close()
+        sourceDB.close()
