@@ -49,6 +49,9 @@ search: $(TWITTER_AUTH_FILE) $(TTS_CRITERIA_DB_FILE)
 pipeline:
 	python pipeline.py --config-url pipeline.conf.yaml
 
+datasette:
+	datasette serve --host 0.0.0.0 --port 8001 --immutable $(TTS_CRITERIA_DB_FILE) --immutable $(TTS_SOURCE_DB_FILE) --immutable $(CONTENT_PROCESSED_DB_FILE)
+
 ## Reduce the size of SQLite databases by running OPTIMIZE for full text search tables, then VACUUM
 compact:
 	sqlite-utils optimize $(TTS_SOURCE_DB_FILE)
