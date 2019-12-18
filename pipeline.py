@@ -88,7 +88,7 @@ class Content(BaseModel):
 
 
 class TextPattern:
-    def __init__(self, pattern_str, ignore_case, replace_with=None):
+    def __init__(self, pattern_str: str, ignore_case: bool, replace_with: str = None):
         self.pattern_str = pattern_str
         flags = re.IGNORECASE if ignore_case == True else 0
         self.reg_exp = re.compile(pattern_str, flags)
@@ -102,16 +102,16 @@ class TextPattern:
 
 
 class TextPatterns:
-    def __init__(self, patterns):
+    def __init__(self, patterns: [TextPattern]):
         self.patterns = patterns
 
-    def match_any(self, text):
+    def match_any(self, text: str):
         for p in self.patterns:
             if p.matches(text):
                 return True
         return False
 
-    def replace_all(self, orig_text):
+    def replace_all(self, orig_text: str):
         new_text = orig_text
         for p in self.patterns:
             new_text = p.replace_all(new_text)
@@ -119,7 +119,7 @@ class TextPatterns:
 
 
 class Configuration:
-    def __init__(self, config_url):
+    def __init__(self, config_url: str):
         self.config_url = config_url
         try:
             with open(config_url) as configfile_contents:
@@ -172,13 +172,13 @@ class CachedRequest(Model):
         database = request_cache_db
         legacy_table_names = False
 
-    def is_valid(self):
+    def is_valid(self) -> bool:
         return True if self.http_status_code == 200 else False
 
-    def is_ignored(self):
+    def is_ignored(self) -> bool:
         return True if self.http_status_code == -2 else False
 
-    def cleaned(self, config):
+    def cleaned(self, config) -> (str, str, str):
         clean_furl = furl(self.http_response_url)
         params_removed = []
         for arg in clean_furl.args:
@@ -206,7 +206,7 @@ class RequestFactory:
         request_cache_db.connect()
         request_cache_db.create_tables([CachedRequest])
 
-    def parse(self, url):
+    def parse(self, url: str) -> CachedRequest:
         if self.config.ignore_url_patterns.match_any(url):
             return CachedRequest(orig_url=url, http_status_code=-2, message="Ignored")
 
@@ -232,7 +232,7 @@ class RequestFactory:
         content_type = resp.headers.get("Content-Type")
         if not content_type is None:
             mime_type, mime_options = cgi.parse_header(content_type)
-            mime_maintype, mime_subtype = mime_type.split("/")
+            mime_maintype, *mime_subtype = mime_type.split("/")
         else:
             mime_type, mime_options, mime_maintype, mime_subtype = (None, None, None, None)
         request = CachedRequest(
@@ -253,7 +253,7 @@ class RequestFactory:
         self.cache(request)
         return request
 
-    def cache(self, request):
+    def cache(self, request: CachedRequest):
         for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
             try:
                 request.created_on = datetime.now()
@@ -284,38 +284,47 @@ class Origin:
 
 
 @use("config", "source_data_db", "execution")
-def consume_source_rows(config, source_data_db, execution):
+def consume_source_rows(
+    config: Configuration, source_data_db: SqliteDatabase, execution: Execution
+):
     for row in source_data_db.execute_sql(config.source["rows_sql"]):
         yield Origin(config, list(row))
 
 
-def extract_urls(origin):
+def extract_urls(origin: Origin):
     for url in RequestFactory.url_extractor.find_urls(origin.from_text, True):
         yield url, origin
 
 
-@use("config", "link_factory")
-def parse_urls(url, origin, config, link_factory):
-    return url, origin, link_factory.parse(url)
+@use("config", "req_factory")
+def parse_urls(url: str, origin: Origin, config: Configuration, req_factory: RequestFactory):
+    return url, origin, req_factory.parse(url)
 
 
-def filter_ignore_urls(url, origin, link):
-    if link.is_ignored():
+def filter_ignore_urls(url: str, origin: Origin, req: CachedRequest):
+    if req.is_ignored():
         return False
     else:
-        return url, origin, link
+        return url, origin, req
 
 
-def filter_valid_urls(url, origin, link):
-    if link.is_valid():
-        return url, origin, link
+def filter_valid_urls(url: str, origin: Origin, req: CachedRequest):
+    if req.is_valid():
+        return url, origin, req
     else:
         return False
 
 
 @use("config", "execution", "namespace")
-def save_content(url, origin, link, config, execution, namespace):
-    final_url, link_brand_fqdn, path_slug = link.cleaned(config)
+def save_content(
+    url: str,
+    origin: Origin,
+    req: CachedRequest,
+    config: Configuration,
+    execution: Execution,
+    namespace: Namespace,
+):
+    final_url, link_brand_fqdn, path_slug = req.cleaned(config)
     # in case the database is locked due to concurrent writes,
     # keep trying before skipping the url
     for _ in range(0, DESTDB_LOCKED_RETRIES_COUNT):
@@ -332,15 +341,15 @@ def save_content(url, origin, link, config, execution, namespace):
                 defaults={
                     "execution": execution,
                     "link_brand_fqdn": link_brand_fqdn,
-                    "orig_url": link.orig_url,
+                    "orig_url": req.orig_url,
                     "path_slug": path_slug,
                     "created_on": datetime.now(),
-                    "content_type": link.content_type,
-                    "mime_type": link.mime_type,
-                    "mime_options": link.mime_options,
-                    "mime_maintype": link.mime_maintype,
-                    "mime_subtype": link.mime_subtype,
-                    "http_resp_headers": link.http_response_headers,
+                    "content_type": req.content_type,
+                    "mime_type": req.mime_type,
+                    "mime_options": req.mime_options,
+                    "mime_maintype": req.mime_maintype,
+                    "mime_subtype": req.mime_subtype,
+                    "http_resp_headers": req.http_response_headers,
                 },
             )
             yield content, content_created
@@ -349,7 +358,7 @@ def save_content(url, origin, link, config, execution, namespace):
                 time.sleep(1)  # wait for the lock to be freed
                 pass  # try again
             else:
-                print("Error: ", url, origin, link, e)
+                print("Error: ", url, origin, req, e)
                 raise e
         finally:
             break
@@ -357,7 +366,7 @@ def save_content(url, origin, link, config, execution, namespace):
         return False
 
 
-def get_graph(config):
+def get_graph(config: Configuration) -> bonobo.Graph:
     graph = bonobo.Graph()
     graph.add_chain(
         consume_source_rows,
@@ -370,7 +379,9 @@ def get_graph(config):
     return graph
 
 
-def get_services(config, source_data_db, link_factory):
+def get_services(
+    config: Configuration, source_data_db: SqliteDatabase, req_factory: RequestFactory
+) -> dict:
     execution = Execution.create(
         created_on=datetime.now(),
         config=json.dumps(
@@ -389,7 +400,7 @@ def get_services(config, source_data_db, link_factory):
         "namespace": namespace,
         "config": config,
         "source_data_db": source_data_db,
-        "link_factory": link_factory,
+        "req_factory": req_factory,
     }
 
 
@@ -409,8 +420,8 @@ if __name__ == "__main__":
         )
         content_db.connect()
         content_db.create_tables([Execution, Namespace, Provenance, Content])
-        link_factory = RequestFactory(config)
-        bonobo.run(get_graph(config), services=get_services(config, sourceDB, link_factory))
-        link_factory.close()
+        req_factory = RequestFactory(config)
+        bonobo.run(get_graph(config), services=get_services(config, sourceDB, req_factory))
+        req_factory.close()
         content_db.close()
         sourceDB.close()
