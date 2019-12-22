@@ -1,16 +1,16 @@
 source:
   namespace: twitter.com
-  db: db/twitter-to-sqlite-unprocessed.sqlite
+  db: tts-content.sqlite
   rows_sql: select full_text, id from tweets
   extract_urls_from_text_sql_col_index: 0
   identify_urls_in_text_sql_col_index: 1
 
 destination:
-  db: db/twitter-content-processed.sqlite
+  db: links-content.sqlite
 
 caches:
   http_requests:
-    db: db/links-cache.sqlite
+    db: links-cache.sqlite
 
 http_request_timeout_secs: 5
 
