@@ -1,10 +1,7 @@
 # See [A collection of useful .gitignore templates](https://github.com/github/gitignore)
 
-# We never store secrets
-twitter-credentials.json
-
-# The Makefile generates these when required
-doc/schema
+# this is external, and is downloaded when required
+tts-content.sqlite
 
 # Since we're using devcontainers, don't store any .vscode project settings
 .vscode
