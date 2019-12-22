@@ -13,6 +13,9 @@ $(TTS_SOURCE_DB_FILE):
 	echo "Downloading $(TTS_SOURCE_DB_FILE) from https://github.com/medigy/digital-health-tweets-to-sqlite/content.sqlite.gz"
 	curl --silent -Lo - "https://github.com/medigy/digital-health-tweets-to-sqlite/blob/master/content.sqlite.gz?raw=true" | gunzip > $(TTS_SOURCE_DB_FILE)
 
+# Grab the latest version of the TTS file and run the pipeline on it
+latest: clean pipeline compact
+
 ## Run the twitter to URL pipeline
 pipeline: $(TTS_SOURCE_DB_FILE)
 	python pipeline.py --config-url pipeline.conf.yaml
