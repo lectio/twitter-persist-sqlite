@@ -1,52 +1,50 @@
 // For format details, see https://aka.ms/vscode-remote/devcontainer.json or the definition README at
 // https://github.com/microsoft/vscode-dev-containers/tree/master/containers/python-3
 {
-	"name": "Python 3",
-	"context": "..",
-	"dockerFile": "Dockerfile",
+  "name": "Python 3",
+  "context": "..",
+  "dockerFile": "Dockerfile",
 
-	// Use 'settings' to set *default* container specific settings.json values on container create. 
-	// You can edit these settings after create using File > Preferences > Settings > Remote.
-	"settings": { 
-		"explorer.openEditors.visible": 0,
-		"terminal.integrated.shell.linux": "/bin/zsh",
-		"terminal.integrated.fontFamily": "Meslo LG M DZ for Powerline",
-		"editor.formatOnSave": true,
-		"python.pythonPath": "/usr/local/bin/python",
-		"python.formatting.provider" : "black",
-		"python.formatting.blackArgs": ["--line-length", "100"],
-		"python.linting.enabled": true,
-		"python.linting.pylintEnabled": true,
-		"python.linting.pylintPath": "/usr/local/bin/pylint"
-	},
+  // Use 'settings' to set *default* container specific settings.json values on container create.
+  // You can edit these settings after create using File > Preferences > Settings > Remote.
+  "settings": {
+    "explorer.openEditors.visible": 0,
+    "terminal.integrated.shell.linux": "/bin/zsh",
+    "terminal.integrated.fontFamily": "Meslo LG M DZ for Powerline",
+    "editor.formatOnSave": true,
+    "python.pythonPath": "/usr/local/bin/python",
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": ["--line-length", "100"],
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.linting.pylintPath": "/usr/local/bin/pylint"
+  },
 
-	// Developers can run [Datasette](https://github.com/simonw/datasette), which defaults to port 8001
-	"appPort": [8001],
+  // Developers can run [Datasette](https://github.com/simonw/datasette), which defaults to port 8001
+  // "appPort": [8001],
 
-	// Uncomment the next line to run commands after the container is created.
-	// "postCreateCommand": "pip install -r requirements.txt",
+  // Uncomment the next line to run commands after the container is created.
+  // "postCreateCommand": "pip install -r requirements.txt",
 
-	// Uncomment the next line to use a non-root user. On Linux, this will prevent
-	// new files getting created as root, but you may need to update the USER_UID
-	// and USER_GID in .devcontainer/Dockerfile to match your user if not 1000.
-	// "runArgs": [ "-u", "vscode" ],
+  // Uncomment the next line to use a non-root user. On Linux, this will prevent
+  // new files getting created as root, but you may need to update the USER_UID
+  // and USER_GID in .devcontainer/Dockerfile to match your user if not 1000.
+  // "runArgs": [ "-u", "vscode" ],
 
-	// Add the IDs of extensions you want installed when the container is created in the array below.
-	"extensions": [
-		"ms-python.python",
-		"ms-azuretools.vscode-docker",
-		"mechatroner.rainbow-csv",
-		"alexcvzz.vscode-sqlite",
-		"coenraads.bracket-pair-colorizer-2",
-		"esbenp.prettier-vscode",
-		"eamodio.gitlens",
-		"visualstudioexptteam.vscodeintellicode",
-		"christian-kohler.path-intellisense",
-		"heptio.jsonnet",
-		"xrc-inc.jsonnet-formatter",
-		"jebbs.plantuml"
-	],
-	"runArgs": [
-		"--hostname", "devcontainer"
-	]
+  // Add the IDs of extensions you want installed when the container is created in the array below.
+  "extensions": [
+    "ms-python.python",
+    "ms-azuretools.vscode-docker",
+    "mechatroner.rainbow-csv",
+    "alexcvzz.vscode-sqlite",
+    "coenraads.bracket-pair-colorizer-2",
+    "esbenp.prettier-vscode",
+    "eamodio.gitlens",
+    "visualstudioexptteam.vscodeintellicode",
+    "christian-kohler.path-intellisense",
+    "heptio.jsonnet",
+    "xrc-inc.jsonnet-formatter",
+    "jebbs.plantuml"
+  ],
+  "runArgs": ["--hostname", "devcontainer"]
 }
