@@ -195,7 +195,7 @@ class CachedRequest(Model):
 class RequestFactory:
     url_extractor = URLExtract()
 
-    def __init__(self, config):
+    def __init__(self, config: Configuration):
         self.config = config
         self.http = requests.Session()
         self.http.headers = {"User-Agent": "Lectio"}
